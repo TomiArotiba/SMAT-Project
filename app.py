@@ -9,6 +9,7 @@ import plotly.io as pio
 import plotly.express as px
 from weasyprint import HTML
 from werkzeug.security import generate_password_hash, check_password_hash
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
@@ -229,13 +230,18 @@ def profile():
     emotional_risk = 0
     risk_message = ""
 
+    #Initialize VADER sentiment analyzer
+    analyzer = SentimentIntensityAnalyzer()
+
+    '''
     # Dynamic weighting for sensitive info frequency
     phone_number_count = 0
     email_count = 0
     negative_sentiment_count = 0
+    '''
 
     # Analyze posts
-    posts_html = "<ul>"
+    posts_html = "<ul class='list-group mt-3'>"
     sentiments = []
     post_messages = []
     phone_pattern = r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b'
@@ -243,13 +249,20 @@ def profile():
     emotional_triggers = ['angry', 'sad', 'frustrated', 'depressed', 'upset', 'anxious']
     oversharing_words = ['birthday', 'vacation', 'family', 'wedding', 'graduation', 'party']
 
+
     for post in posts_data:
         message = post.get('message', 'No message')
 
-        # Sentiment analysis
-        blob = TextBlob(message)
-        sentiment = blob.sentiment.polarity
-        sentiments.append(sentiment)
+        # Sentiment analysis with text blob
+        #blob = TextBlob(message)
+        #sentiment = blob.sentiment.polarity
+        #sentiments.append(sentiment)
+        #post_messages.append(message[:50])  # Shortened for display
+
+        # Sentiment analysis with VADER
+        vader_sentiment = analyzer.polarity_scores(message)
+        sentiment_score = vader_sentiment['compound']  # Compound score gives overall sentiment
+        sentiments.append(sentiment_score)
         post_messages.append(message[:50])  # Shortened for display
 
         # Check for emotional trigger words
@@ -263,35 +276,48 @@ def profile():
             risk_message += f"Potential oversharing found in post: {message}<br>"
 
         # Check for sensitive information
+        #if re.search(phone_pattern, message):
+        #    phone_number_count += 1
+        #    risk_message += f"Potential phone number found in post: {message}<br>"
+        #if re.search(email_pattern, message):
+        #    email_count += 1
+        #    risk_message += f"Potential email address found in post: {message}<br>"
+
         if re.search(phone_pattern, message):
-            phone_number_count += 1
+            financial_risk += 5  # Higher risk for phone numbers
             risk_message += f"Potential phone number found in post: {message}<br>"
         if re.search(email_pattern, message):
-            email_count += 1
+            financial_risk += 3  # Moderate risk for email addresses
             risk_message += f"Potential email address found in post: {message}<br>"
 
         # Sentiment-based emotional risk calculation
-        if sentiment < 0:
-            negative_sentiment_count += 1
-            if sentiment < -0.5:
-                emotional_risk += 3  # Strong negative sentiment
-            else:
-                emotional_risk += 1  # Mild negative sentiment
+        #if sentiment < 0:
+        #    negative_sentiment_count += 1
+        #    if sentiment < -0.5:
+        #        emotional_risk += 3  # Strong negative sentiment
+        #    else:
+        #        emotional_risk += 1  # Mild negative sentiment
+        # Adjust risk based on sentiment score
+        if sentiment_score <= -0.5:
+            emotional_risk += 3  # Strong negative sentiment
+        elif sentiment_score < 0:
+            emotional_risk += 1  # Mild negative sentiment
 
-        posts_html += f"<li class='list-group-item'>{message} (Sentiment score: {sentiment})</li>"
+        posts_html += f"<li class='list-group-item'>{message} (Sentiment score: {sentiment_score})</li>"
+        #posts_html += f"<li class='list-group-item'>{message} (Sentiment score: {sentiment})</li>"
 
     posts_html += "</ul>"
 
     # Apply dynamic weights for frequency of sensitive info
-    if phone_number_count > 1:
-        financial_risk += phone_number_count * 5  # Multiple phone numbers
-    elif phone_number_count == 1:
-        financial_risk += 5
+    #if phone_number_count > 1:
+    #    financial_risk += phone_number_count * 5  # Multiple phone numbers
+    #elif phone_number_count == 1:
+    #    financial_risk += 5
 
-    if email_count > 1:
-        financial_risk += email_count * 3  # Multiple email occurrences
-    elif email_count == 1:
-        financial_risk += 3  # Single email occurrence
+    #if email_count > 1:
+    #    financial_risk += email_count * 3  # Multiple email occurrences
+    #elif email_count == 1:
+    #    financial_risk += 3  # Single email occurrence
 
     # Final risk score based on categorized risks
     total_risk_score = personal_data_risk + financial_risk + emotional_risk
