@@ -210,7 +210,7 @@ def profile():
         return redirect(url_for('login_facebook'))
 
     profile_response = requests.get(FB_API_URL, params={
-        'fields': 'id,name,email,picture,birthday,location,posts',
+        'fields': 'id,name,email,picture,birthday,location,posts.limit(100)',
         'access_token': access_token
     })
 
@@ -227,6 +227,7 @@ def profile():
 
     # Check for profiles with no posts
     posts_data = profile_data.get('posts', {}).get('data', [])
+    session['total_posts'] = len(posts_data)
     if not posts_data:
         return render_template_string(f"""
             <h2>Profile Information</h2>
@@ -245,15 +246,34 @@ def profile():
     #Initialize VADER sentiment analyzer
     analyzer = SentimentIntensityAnalyzer()
 
+    #Lists for categorization
+    oversharing_posts = []
+    emotional_trigger_posts = []
+    personal_data_posts = []
+    financial_info_posts = []
+
     # Analyze posts
     posts_html = "<ul class='list-group mt-3'>"
     sentiments = []
     post_messages = []
-    phone_pattern = r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b'
-    email_pattern = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
-    emotional_triggers = ['angry', 'sad', 'frustrated', 'depressed', 'upset', 'anxious']
-    oversharing_words = ['birthday', 'vacation', 'family', 'wedding', 'graduation', 'party']
-
+    phone_pattern = r'\b(?:\+?(\d{1,3}))?[-.\s]?(\d{1,4})[-.\s]?(\d{1,4})[-.\s]?(\d{1,9})\b'
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    emotional_triggers = [
+        'angry', 'sad', 'frustrated', 'depressed', 'upset', 'anxious',
+        'furious', 'rage', 'irritated', 'mad', 'crying', 'grief', 'mourning',
+        'heartbroken', 'lonely', 'nervous', 'panic', 'stress', 'worried', 'tense',
+        'terrified', 'afraid', 'scared', 'nightmare'
+    ]
+    oversharing_words = [
+        'birthday', 'vacation', 'family', 'wedding', 'graduation', 'party',
+        'hospital', 'health', 'accident', 'pregnancy', 'baby', 'anniversary',
+        'holiday', 'honeymoon', 'new house', 'new job', 'address', 'school', 'workplace'
+    ]
+    financial_keywords = [
+        'credit card', 'account', 'bank', 'loan', 'password', 'debit card', 'PIN',
+        'insurance', 'crypto', 'investment', 'bank name', 'account number',
+        'mortgage', 'scam', 'fraud', 'phishing', 'steal', 'hacked'
+    ]
 
     num_sensitive_info = 0  # Initialize counter for sensitive info
     num_emotional_triggers = 0  # Initialize counter for emotional triggers
@@ -277,22 +297,33 @@ def profile():
             if any(trigger in message.lower() for trigger in emotional_triggers):
                 emotional_risk += 3
                 num_emotional_triggers += 1
-                risk_message += f"Emotional trigger found in post: {message}<br>"
+                risk_message += f"Potential emotional trigger found in post: {message}<br>"
+                emotional_trigger_posts.append(message)
 
             # Check for oversharing content
             if any(word in message.lower() for word in oversharing_words):
-                personal_data_risk += 2
+                personal_data_risk += 3
                 num_oversharing += 1
                 risk_message += f"Potential oversharing found in post: {message}<br>"
+                oversharing_posts.append(message)
 
             if re.search(phone_pattern, message):
                 financial_risk += 5  # Higher risk for phone numbers
                 num_sensitive_info += 1
                 risk_message += f"Potential phone number found in post: {message}<br>"
+                personal_data_posts.append(message)
+
             if re.search(email_pattern, message):
                 financial_risk += 3  # Moderate risk for email addresses
                 num_sensitive_info += 1
                 risk_message += f"Potential email address found in post: {message}<br>"
+                personal_data_posts.append(message)
+
+            if any(finance in message.lower() for finance in financial_keywords):
+                financial_risk += 5 
+                num_sensitive_info += 1
+                risk_message += f"Potential financial information found in post: {message}<br>"
+                financial_info_posts.append(message)
 
             # Adjust risk based on sentiment score  
             if sentiment_score <= -0.5:
@@ -309,7 +340,7 @@ def profile():
     total_risk_score = personal_data_risk + financial_risk + emotional_risk
 
     #Calculate avg_sentiment
-    avg_sentiment = np.mean(sentiments)
+    avg_sentiment = np.mean(sentiments) if sentiments else 0
 
     #Prepare features for the Random Forest model
     features = np.array([[avg_sentiment, num_sensitive_info, num_emotional_triggers, num_oversharing]])
@@ -318,7 +349,6 @@ def profile():
     predicted_risk = rf_model.predict(features)[0]
 
     # Step 5: Combine model prediction with heuristic risks
-    heuristic_risk_score = total_risk_score  # From previous calculations
     # Define weights for heuristic risk categories
     weights = {'emotional': 0.2, 'personal_data': 0.4, 'financial': 0.4}
 
@@ -331,7 +361,7 @@ def profile():
 
     #Combine heuristic and model predictions
     final_risk_score = 0.6 * predicted_risk + 0.4 * (weighted_heuristic_score / 10)  # Normalize heuristic score
-    #final_risk_score = predicted_risk
+
     # Step 6: Update risk message and display
     if final_risk_score < 1:
         risk_message += "The overall risk level is LOW.<br>"
@@ -343,9 +373,16 @@ def profile():
         risk_message += "The overall risk level is HIGH.<br>"
         print(final_risk_score)
 
+    risk_level = "LOW" if final_risk_score < 1 else "MEDIUM" if final_risk_score < 2 else "HIGH"
+
     # Step 7: Update session storage for PDF report
     session['risk_score'] = float(final_risk_score)
     session['risk_message'] = risk_message
+    session['risk_level'] = risk_level
+    session['num_oversharing'] = num_oversharing
+    session['num_emotional_triggers'] = num_emotional_triggers
+    session['num_sensitive_info'] = num_sensitive_info
+    session['num_financial_info'] = len(financial_info_posts)
 
 
     # Save report to the database
@@ -364,6 +401,7 @@ def profile():
             <meta charset="utf-8">
             <title>Profile - SMAT</title>
             <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+
         </head>
         <body>
             <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -386,6 +424,7 @@ def profile():
                 </div>
             </nav>
             <div class="container mt-5">
+                <!-- Profile Information -->
                 <div class="card mb-3">
                     <div class="row no-gutters">
                         <div class="col-md-4">
@@ -397,18 +436,48 @@ def profile():
                                 <p class="card-text"><strong>Email:</strong> {profile_data.get('email', 'No email')}</p>
                                 <p class="card-text"><strong>Birthday:</strong> {profile_data.get('birthday', 'No birthday')}</p>
                                 <p class="card-text"><strong>Location:</strong> {profile_data.get('location', {}).get('name', 'No location')}</p>
-                                <p class="card-text"><strong>Risk Assessment:</strong> {risk_message}</p>
-                                <p class="card-text"><a href="/generate_report" class="btn btn-primary">Download Report</a></p>
+                                <p class="card-text"><strong>Risk Level:</strong> {risk_level}</p>
                             </div>
                         </div>
                     </div>
                 </div>
+
+                <!-- Recent Posts -->
                 <h3 class="mt-4">Recent Posts</h3>
-                {posts_html}
+                <div>{posts_html}</div>
+
+                <!-- Potential Oversharing -->
+                <h3 class="mt-4">Potential Oversharing</h3>
+                <ul class="list-group">
+                    {"".join(f"<li class='list-group-item'>{post}</li>" for post in oversharing_posts) or "<li class='list-group-item'>No oversharing posts detected.</li>"}
+                </ul>
+
+                <!-- Emotional Triggers -->
+                <h3 class="mt-4">Potential Emotional Triggers</h3>
+                <ul class="list-group">
+                    {"".join(f"<li class='list-group-item'>{post}</li>" for post in emotional_trigger_posts) or "<li class='list-group-item'>No emotional triggers detected.</li>"}
+                </ul>
+
+                <!-- Personal Data -->
+                <h3 class="mt-4">Potential Personal Data (Phone Numbers or Emails)</h3>
+                <ul class="list-group">
+                    {"".join(f"<li class='list-group-item'>{post}</li>" for post in personal_data_posts) or "<li class='list-group-item'>No personal data detected.</li>"}
+                </ul>
+
+                <!-- Financial Information -->
+                <h3 class="mt-4">Potential Financial Information</h3>
+                <ul class="list-group">
+                    {"".join(f"<li class='list-group-item'>{post}</li>" for post in financial_info_posts) or "<li class='list-group-item'>No financial information detected.</li>"}
+                </ul>
+
+                <!-- Actions -->
+                <div class="mt-4 d-flex justify-content-between mb-5">
+                    <a href="/generate_report" class="btn btn-primary">Download Report</a>
+                    <a href="/delete_account" class="btn btn-danger">Delete Account</a>
+                </div>
             </div>
-            <a href="/delete_account" class="btn btn-danger mt-3">Delete Account</a>
             <footer class="bg-dark text-white text-center py-3">
-                <p>&copy; 2024 SMAT. All Rights Reserved. | <a href="#" class="text-white">Contact Us</a></p>
+                <p>&copy; 2024 SMAT. All Rights Reserved.</p>
             </footer>
         </body>
         </html>
@@ -434,7 +503,7 @@ def reports():
     formatted_dates = [date.strftime('%Y-%m-%d %H:%M') for date in report_dates]
 
     # Create a scatter plot using Plotly
-    fig = go.Figure(data=go.Scatter(x=formatted_dates, y=risk_scores, mode='markers', marker=dict(size=10, color='blue')))
+    fig = go.Figure(data=go.Scatter(x=formatted_dates, y=risk_scores, mode='markers', marker=dict(size=10, color='#007bff')))
     fig.update_layout(
         title='Risk Score Trends Over Time',
         xaxis_title='Date & Time',
@@ -493,7 +562,8 @@ def reports():
                                 <td>{{ report.created_at.replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%Y-%m-%d %H:%M') }}</td>
                                 <td>{{ report.risk_score }}</td>
                                 <td>
-                                    <a href="/reports/{{ report.id }}" class="btn btn-info btn-sm">View</a>
+                                    <a href="/reports/{{ report.id }}" class="btn btn-primary btn-sm">View</a>
+                                    <a href="/generate_report/{{ report.id }}" class="btn btn-primary btn-sm">Download</a>
                                     <a href="/reports/delete/{{ report.id }}" class="btn btn-danger btn-sm">Delete</a>
                                 </td>
                             </tr>
@@ -505,6 +575,9 @@ def reports():
                 {% endif %}
                 <div>{{ trend_chart|safe }}</div>
             </div>
+            <footer class="bg-dark text-white text-center py-3">
+                <p>&copy; 2024 SMAT. All Rights Reserved.</p>
+            </footer>
         </body>
         </html>
     """, user_reports=user_reports, trend_chart=trend_chart, local_timezone=local_timezone, timezone=timezone)
@@ -518,27 +591,148 @@ def view_report(report_id):
     
     # Convert to local timezone
     local_timezone = get_localzone()
-    created_at_local = report.created_at.replace(tzinfo=timezone.utc).astimezone(local_timezone)
+    created_at_local = report.created_at.replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%Y-%m-%d %H:%M')
 
-    return render_template_string("""
+    # Extract statistics
+    risk_messages = report.risk_message.split("<br>")
+    total_posts_analyzed = session.get('total_posts', 0)
+    stats = {
+        "oversharing": sum("Potential oversharing" in msg for msg in risk_messages),
+        "emotional_triggers": sum("Potential emotional trigger" in msg for msg in risk_messages),
+        "personal_data": sum("Potential phone number" in msg or "Potential email address" in msg for msg in risk_messages),
+        "financial_risks": sum("Potential financial information" in msg for msg in risk_messages),
+    }
+
+    # Separate posts by category
+    risk_details = {
+        "oversharing": [msg for msg in risk_messages if "Potential oversharing" in msg],
+        "emotional_triggers": [msg for msg in risk_messages if "Potential emotional trigger" in msg],
+        "personal_data": [msg for msg in risk_messages if "Potential phone number" in msg or "Potential email address" in msg],
+        "financial_risks": [msg for msg in risk_messages if "Potential financial information" in msg],
+    }
+
+
+    # Visualization - Bar Chart
+    categories = ["Oversharing", "Emotional Triggers", "Personal Data", "Financial Risks"]
+    risk_counts = [stats["oversharing"], stats["emotional_triggers"], stats["personal_data"], stats["financial_risks"]]
+    risk_level = session.get('risk_level')
+
+    bar_fig = go.Figure([go.Bar(x=categories, y=risk_counts, marker=dict(color='#007bff'))])
+    bar_fig.update_layout(
+        title="",
+        xaxis_title="Risk Category",
+        yaxis_title="Count",
+        template="plotly_white"
+    )
+    bar_chart = pio.to_html(bar_fig, full_html=False)
+
+    def format_category(title, items):
+        if not items:
+            return f"<p class='text-muted'>No posts detected.</p>"
+        return "<div class='mt-2'>" + "".join(f"<p>{item}</p>" for item in items) + "</div>"
+
+
+    return render_template_string(f"""
         <!doctype html>
         <html lang="en">
         <head>
             <meta charset="utf-8">
             <title>Report Details - SMAT</title>
             <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+            <style>
+                .info-box {{
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                    background-color: #f9f9f9;
+                }}
+                .info-title {{
+                    font-size: 1.25rem;
+                    font-weight: bold;
+                    color: #333;
+                }}
+                .category-section {{
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                    background-color: #f9f9f9;
+                }}
+                .category-title {{
+                    font-size: 1.25rem;
+                    font-weight: bold;
+                    color: #333;
+                }}
+                .category-details {{
+                    margin-top: 10px;
+                }}
+                .chart-container {{
+                    margin-top: 30px;
+                }}
+            </style>
         </head>
         <body>
             <div class="container mt-5">
-                <h2>Report Details</h2>
-                <p><strong>Created At:</strong> {{ created_at_local.strftime('%Y-%m-%d %H:%M') }}</p>
-                <p><strong>Risk Score:</strong> {{ report.risk_score }}</p>
-                <p><strong>Risk Message:</strong> {{ report.risk_message }}</p>
-                <a href="/reports" class="btn btn-secondary">Back to Reports</a>
+                <h2 class="text-center">Report Details</h2>
+                <!-- Date Created and Total Posts Section -->
+                <div class="info-box d-flex justify-content-between">
+                    <div>
+                        <p class="info-title">Date Created</p>
+                        <p>{created_at_local}</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="info-title">Risk Level</p>
+                        <p>{risk_level}</p>
+                    </div>
+                    <div>
+                        <p class="info-title">Total Posts Analyzed</p>
+                        <p>{total_posts_analyzed}</p>
+                    </div>
+                </div>
+
+                <!-- Risk Breakdown Sections -->
+                <div class="category-section">
+                    <div class="category-title">Potential Oversharing</div>
+                    <div class="category-details">
+                        {format_category("Oversharing", risk_details["oversharing"])}
+                    </div>
+                </div>
+
+                <div class="category-section">
+                    <div class="category-title">Potential Emotional Triggers</div>
+                    <div class="category-details">
+                        {format_category("Emotional Triggers", risk_details["emotional_triggers"])}
+                    </div>
+                </div>
+
+                <div class="category-section">
+                    <div class="category-title">Potential Personal Data</div>
+                    <div class="category-details">
+                        {format_category("Personal Data", risk_details["personal_data"])}
+                    </div>
+                </div>
+
+                <div class="category-section">
+                    <div class="category-title">Potential Financial Information</div>
+                    <div class="category-details">
+                        {format_category("Financial Risks", risk_details["financial_risks"])}
+                    </div>
+                </div>
+
+                <!-- Visualization -->
+                <div class="chart-container">
+                    <h3>Risk Categories Chart</h3>
+                    <div>{bar_chart}</div>
+                </div>
+
+                <div class="text-center mt-4 mb-5">
+                    <a href="/reports" class="btn btn-primary">Back to Reports</a>
+                </div>
             </div>
         </body>
         </html>
-    """, report=report, created_at_local=created_at_local, timezone=timezone, local_timezone=local_timezone)
+    """, report=report, timezone=timezone, local_timezone=local_timezone, created_at_local=created_at_local, stats=stats, bar_chart=bar_chart, risk_details=risk_details)
 
 @app.route('/reports/delete/<int:report_id>', methods=['GET', 'POST'])
 @login_required
@@ -549,6 +743,132 @@ def delete_report(report_id):
     db.session.delete(report)
     db.session.commit()
     return redirect(url_for('reports'))
+
+#Generate a downloadable PDF report
+@app.route('/generate_report/<int:report_id>', methods=['GET'])
+@login_required
+def generate_report(report_id):
+    report = Report.query.get_or_404(report_id)
+    if report.user_id != current_user.id:
+        return "Unauthorized access", 403
+
+    # Retrieve risk details
+    risk_messages = report.risk_message.split("<br>")
+    oversharing_posts = [msg for msg in risk_messages if "Potential oversharing" in msg]
+    emotional_trigger_posts = [msg for msg in risk_messages if "Potential emotional trigger" in msg]
+    personal_data_posts = [msg for msg in risk_messages if "Potential phone number" in msg or "Potential email address" in msg]
+    financial_info_posts = [msg for msg in risk_messages if "Potential financial information" in msg]
+
+    # Generate bar chart (same as in the view report section)
+    categories = ['Oversharing', 'Emotional Triggers', 'Personal Data', 'Financial Risks']
+    risk_counts = [
+        len(oversharing_posts),
+        len(emotional_trigger_posts),
+        len(personal_data_posts),
+        len(financial_info_posts),
+    ]
+    fig = go.Figure(data=[go.Bar(x=categories, y=risk_counts)])
+    fig.update_layout(
+        title="",
+        xaxis_title="RiskCategory",
+        yaxis_title="Number of Posts",
+        template="plotly_white",
+    )
+    chart_path = f"/tmp/risk_breakdown_chart_{report_id}.png"
+    fig.write_image(chart_path)
+
+    # Generate HTML for PDF
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                line-height: 1.4;
+                font-size: 12px;
+            }}
+            h1 {{
+                text-align: center;
+                font-size: 18px;
+                margin-bottom: 20px;
+            }}
+            h2 {{
+                font-size: 16px;
+                margin-top: 30px;
+                margin-bottom: 15px;
+                border-bottom: 1px solid #000;
+            }}
+            h3 {{
+                font-size: 14px;
+                margin-top: 25px;
+                margin-bottom: 10px;
+            }}
+            .section {{
+                margin-bottom: 40px;
+            }}
+            .post {{
+                margin-bottom: 15px;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+            }}
+            .chart {{
+                text-align: center;
+                margin-top: 20px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>SMAT Analysis Report</h1>
+
+        <div class="section">
+            <h2>Profile Information</h2>
+            <p><strong>Date Created:</strong> {report.created_at.strftime('%Y-%m-%d %H:%M')}</p>
+            <p><strong>Risk Score:</strong> {report.risk_score:.2f}</p>
+        </div>
+
+        <div class="section">
+            <h2>Risk Categories</h2>
+            <p><strong>Oversharing:</strong> {len(oversharing_posts)} posts</p>
+            <p><strong>Emotional Triggers:</strong> {len(emotional_trigger_posts)} posts</p>
+            <p><strong>Personal Data:</strong> {len(personal_data_posts)} posts</p>
+            <p><strong>Financial Risks:</strong> {len(financial_info_posts)} posts</p>
+        </div>
+
+        <div class="section">
+            <h2>Detailed Posts</h2>
+
+            <h3>Oversharing Posts</h3>
+            {"".join(f"<div class='post'>{post}</div>" for post in oversharing_posts) or "<p>No oversharing posts detected.</p>"}
+
+            <h3>Emotional Trigger Posts</h3>
+            {"".join(f"<div class='post'>{post}</div>" for post in emotional_trigger_posts) or "<p>No emotional trigger posts detected.</p>"}
+
+            <h3>Personal Data</h3>
+            {"".join(f"<div class='post'>{post}</div>" for post in personal_data_posts) or "<p>No personal data posts detected.</p>"}
+
+            <h3>Financial Risks</h3>
+            {"".join(f"<div class='post'>{post}</div>" for post in financial_info_posts) or "<p>No financial risk posts detected.</p>"}
+        </div>
+        <div class="chart">
+            <h2>Risk Breakdown Chart</h2>
+            <img src="file://{chart_path}" alt="Risk Breakdown Chart" width="600">
+        </div>
+    </body>
+    </html>
+    """
+
+    # Convert HTML to PDF
+    pdf = HTML(string=html_content).write_pdf()
+
+    # Serve the PDF as a downloadable file
+    response = make_response(pdf)
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = f'attachment; filename=smat_report_{report_id}.pdf'
+    return response
+
+
 
 # Logout route
 @app.route('/logout')
@@ -634,51 +954,6 @@ def suggestions():
         </body>
         </html>
     """, general_tips=general_tips, personalized_tips=personalized_tips)
-
-
-
-# Step 5: Generate a downloadable PDF report
-@app.route('/generate_report')
-@login_required
-def generate_report():
-    access_token = session.get('access_token')
-    profile_response = requests.get(FB_API_URL, params={
-        'fields': 'id,name,email,picture,birthday,location,posts',
-        'access_token': access_token
-    })
-    profile_data = profile_response.json()
-
-    # Retrieve risk_score and risk_message from the session
-    risk_score = session.get('risk_score', 'No score available')
-    risk_message = session.get('risk_message', 'No risk assessment available')
-
-    # Convert created_at to local timezone
-    latest_report = Report.query.filter_by(user_id=current_user.id).order_by(Report.created_at.desc()).first()
-    local_timezone = get_localzone()
-    created_at_local = latest_report.created_at.replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%Y-%m-%d %H:%M')
-
-    # Render the HTML content for the PDF
-    html_content = f"""
-    <h1>SMAT Analysis Report</h1>
-    <h2>Profile Information</h2>
-    <strong>Name:</strong> {profile_data['name']}<br>
-    <strong>Email:</strong> {profile_data.get('email', 'No email')}<br>
-    <h3>Created At (Local Time):</h3>
-    {created_at_local}<br>
-    <h3>Risk Score:</h3>
-    {risk_score}
-    <h3>Risk Breakdown:</h3>
-    {risk_message}
-    """
-
-    # Convert HTML to PDF
-    pdf = HTML(string=html_content).write_pdf()
-
-    # Serve the PDF as a downloadable file
-    response = make_response(pdf)
-    response.headers['Content-Type'] = 'application/pdf'
-    response.headers['Content-Disposition'] = 'attachment; filename=smat_report.pdf'
-    return response
 
 
 @app.route('/delete_account', methods=['GET', 'POST'])
