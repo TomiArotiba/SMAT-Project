@@ -228,6 +228,7 @@ def profile():
     # Check for profiles with no posts
     posts_data = profile_data.get('posts', {}).get('data', [])
     session['total_posts'] = len(posts_data)
+
     if not posts_data:
         return render_template_string(f"""
             <h2>Profile Information</h2>
@@ -336,9 +337,6 @@ def profile():
 
         posts_html += "</ul>"
 
-    # Final risk score based on categorized risks
-    total_risk_score = personal_data_risk + financial_risk + emotional_risk
-
     #Calculate avg_sentiment
     avg_sentiment = np.mean(sentiments) if sentiments else 0
 
@@ -376,6 +374,10 @@ def profile():
     risk_level = "LOW" if final_risk_score < 1 else "MEDIUM" if final_risk_score < 2 else "HIGH"
 
     # Step 7: Update session storage for PDF report
+    session['profile_name'] = profile_data['name']
+    session['profile_email'] = profile_data.get('email', 'No email')
+    session['profile_birthday'] = profile_data.get('birthday', 'No birthday')
+    session['profile_birthday'] = profile_data.get('location', {}).get('name', 'No location')                
     session['risk_score'] = float(final_risk_score)
     session['risk_message'] = risk_message
     session['risk_level'] = risk_level
@@ -383,7 +385,6 @@ def profile():
     session['num_emotional_triggers'] = num_emotional_triggers
     session['num_sensitive_info'] = num_sensitive_info
     session['num_financial_info'] = len(financial_info_posts)
-
 
     # Save report to the database
     new_report = Report(
@@ -752,6 +753,26 @@ def generate_report(report_id):
     if report.user_id != current_user.id:
         return "Unauthorized access", 403
 
+    # Retrieve profile details from session
+    profile_name = session.get('profile_name')
+    profile_email = session.get('profile_email')
+    profile_birthday = session.get('profile_birthday')
+    profile_location = session.get('profile_location')
+    risk_level = session.get('risk_level')
+
+    #If session data is missing, fetch from Facebook API
+    if not profile_name or not profile_email or not profile_birthday or not profile_location:
+        access_token = session.get('access_token')
+        profile_response = requests.get(FB_API_URL, params={
+            'fields': 'id,name,email,birthday,location',
+            'access_token': access_token
+        })
+        profile_data = profile_response.json()
+        profile_name = profile_data.get('name', 'Not Available')
+        profile_email = profile_data.get('email', 'Not Available')
+        profile_birthday = profile_data.get('birthday', 'Not Available')
+        profile_location = profile_data.get('location', {}).get('name', 'Not Available')
+
     # Retrieve risk details
     risk_messages = report.risk_message.split("<br>")
     oversharing_posts = [msg for msg in risk_messages if "Potential oversharing" in msg]
@@ -770,7 +791,7 @@ def generate_report(report_id):
     fig = go.Figure(data=[go.Bar(x=categories, y=risk_counts)])
     fig.update_layout(
         title="",
-        xaxis_title="RiskCategory",
+        xaxis_title="Risk Category",
         yaxis_title="Number of Posts",
         template="plotly_white",
     )
@@ -824,7 +845,12 @@ def generate_report(report_id):
 
         <div class="section">
             <h2>Profile Information</h2>
+            <p><strong>Name:</strong> {profile_name}</p>
+            <p><strong>Email:</strong> {profile_email}</p>
+            <p><strong>Birthday:</strong> {profile_birthday}</p>
+            <p><strong>Location:</strong> {profile_location}</p>
             <p><strong>Date Created:</strong> {report.created_at.strftime('%Y-%m-%d %H:%M')}</p>
+            <p><strong>Risk Level:</strong> {risk_level}</p>
             <p><strong>Risk Score:</strong> {report.risk_score:.2f}</p>
         </div>
 
@@ -885,26 +911,69 @@ def suggestions():
     # Retrieve the latest risk message and score for personalized suggestions
     latest_report = Report.query.filter_by(user_id=current_user.id).order_by(Report.created_at.desc()).first()
 
-    # General suggestions
-    general_tips = [
-        "Avoid oversharing personal details such as location or sensitive information.",
-        "Use strong and unique passwords for your social media accounts.",
-        "Enable two-factor authentication wherever possible.",
-        "Be cautious of phishing messages or suspicious links.",
-        "Regularly review your privacy settings on social media platforms.",
-    ]
+    # General suggestions grouped by category
+    general_tips = {
+        "Privacy Settings": [
+            "Regularly review your privacy settings on social media platforms.",
+            "Limit who can see your posts and profile information.",
+            "Avoid sharing your location in real-time."
+        ],
+        "Account Security": [
+            "Use strong and unique passwords for your social media accounts.",
+            "Enable two-factor authentication wherever possible.",
+            "Be cautious of phishing messages or suspicious links."
+        ],
+        "Content Sharing": [
+            "Think twice before sharing personal details such as birthdays, vacations, or sensitive information.",
+            "Avoid posting financial details or personal data like phone numbers or email addresses.",
+            "Refrain from engaging in emotionally charged posts or sharing emotional triggers."
+        ]
+    }
 
-    # Personalized suggestions based on risk level
-    personalized_tips = []
+    # Personalized suggestions and additional recommendations
+    personalized_suggestions = ""
+    risk_level_color = "black"  # Default for low risk
     if latest_report:
-        if latest_report.risk_score >= 2:
-            personalized_tips.append("Your risk level is HIGH. Avoid sharing sensitive details like phone numbers and emails in your posts.")
-        elif 1 <= latest_report.risk_score < 2:
-            personalized_tips.append("Your risk level is MEDIUM. Be mindful of emotional content that could make you susceptible to manipulation.")
-        else:
-            personalized_tips.append("Your risk level is LOW. Keep maintaining good social media practices!")
+        risk_score = latest_report.risk_score
 
-    # Render the suggestions page
+        if risk_score >= 2:  # HIGH Risk
+            risk_level_color = "red"
+            personalized_suggestions = """
+                <p><strong>Your risk level is <span style='color: red;'>HIGH</span>.</strong> Immediate action is recommended to reduce your exposure.</p>
+                <p>Recommendations:</p>
+                <ul>
+                    <li>Remove or edit posts containing sensitive information, such as financial details, phone numbers, or email addresses.</li>
+                    <li>Reduce oversharing by limiting posts about personal events like birthdays, vacations, or work locations.</li>
+                    <li>Avoid posting emotionally charged content that could make you vulnerable to manipulation.</li>
+                    <li>Regularly monitor your account for suspicious activity or unauthorized access.</li>
+                </ul>
+            """
+        elif 1 <= risk_score < 2:  # MEDIUM Risk
+            risk_level_color = "darkgoldenrod"
+            personalized_suggestions = """
+                <p><strong>Your risk level is <span style='color: darkgoldenrod;'>MEDIUM</span></strong>.</p>
+                <p>Some improvements in your social media behavior are recommended.</p>
+                <p>Recommendations:</p>
+                <ul>
+                    <li>Review your recent posts for any oversharing or emotional content and remove them if necessary.</li>
+                    <li>Strengthen your account security by enabling two-factor authentication and updating passwords.</li>
+                    <li>Be cautious of unsolicited messages or links that could be phishing attempts.</li>
+                    <li>Limit sharing posts about your location or daily activities in real-time.</li>
+                </ul>
+            """
+        else:  # LOW Risk
+            risk_level_color = "black"
+            personalized_suggestions = """
+                <p><strong>Your risk level is <span style='color: black;'>LOW</span>.</strong> Keep up the good practices!</p>
+                <p>Recommendations:</p>
+                <ul>
+                    <li>Continue to monitor your posts and avoid sharing sensitive information.</li>
+                    <li>Stay cautious about any suspicious messages or links.</li>
+                    <li>Review your privacy settings periodically to ensure they align with best practices.</li>
+                </ul>
+            """
+
+    # Render the suggestions page with the updated layout
     return render_template_string("""
         <!doctype html>
         <html lang="en">
@@ -912,6 +981,32 @@ def suggestions():
             <meta charset="utf-8">
             <title>Suggestions - SMAT</title>
             <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+            <style>
+                .info-box {
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                    background-color: #f9f9f9;
+                }
+                .info-title {
+                    font-size: 1.20rem;
+                    font-weight: bold;
+                    color: #333;
+                }
+                .category-section {
+                    padding: 15px;
+                    margin-bottom: 20px;
+                }
+                .category-title {
+                    font-size: 1.20rem;
+                    font-weight: bold;
+                    color: #333;
+                }
+                .category-details {
+                    margin-top: 10px;
+                }
+            </style>
         </head>
         <body>
             <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -934,26 +1029,40 @@ def suggestions():
                 </div>
             </nav>
             <div class="container mt-5">
-                <h2>Suggestions for Reducing Risk</h2>
-                <h4 class="mt-4">General Tips</h4>
-                <ul class="list-group">
-                    {% for tip in general_tips %}
-                        <li class="list-group-item">{{ tip }}</li>
-                    {% endfor %}
-                </ul>
-                {% if personalized_tips %}
-                    <h4 class="mt-4">Personalized Suggestions</h4>
-                    <ul class="list-group">
-                        {% for tip in personalized_tips %}
-                            <li class="list-group-item text-warning">{{ tip }}</li>
+                <h2 class="text-center">Suggestions for Reducing Risk</h2>
+
+                <!-- General Tips Section -->
+                <div class="category-section">
+                    <div class="category-title">General Suggestions</div>
+                    <div class="category-details">
+                        {% for category, tips in general_tips.items() %}
+                            <div class="info-box">
+                                <div class="info-title">{{ category }}</div>
+                                <ul class="list-group">
+                                    {% for tip in tips %}
+                                        <li class="list-group-item">{{ tip }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
                         {% endfor %}
-                    </ul>
+                    </div>
+                </div>
+
+                <!-- Personalized Suggestions and Recommendations -->
+                {% if personalized_suggestions %}
+                    <div class="category-section">
+                        <div class="category-title">Personalized Suggestions</div>
+                        <div class="category-details">
+                            <div class="info-box">
+                                {{ personalized_suggestions|safe }}
+                            </div>
+                        </div>
+                    </div>
                 {% endif %}
-                <a href="/profile" class="btn btn-secondary mt-3">Back to Profile</a>
             </div>
         </body>
         </html>
-    """, general_tips=general_tips, personalized_tips=personalized_tips)
+    """, general_tips=general_tips, personalized_suggestions=personalized_suggestions)
 
 
 @app.route('/delete_account', methods=['GET', 'POST'])
