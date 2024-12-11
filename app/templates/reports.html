@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Reports - SMAT{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <h2>Your Reports</h2>
+    {% if user_reports %}
+        <table class="table table-striped mt-3">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Date Created</th>
+                    <th>Risk Score</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in user_reports %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ report.created_at.replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>{{ report.risk_score }}</td>
+                        <td>
+                            <a href="{{ url_for('main.view_report', report_id=report.id) }}" class="btn btn-primary btn-sm">View</a>
+                            <a href="{{ url_for('main.generate_report', report_id=report.id) }}" class="btn btn-primary btn-sm">Download</a>
+                            <a href="{{ url_for('main.delete_report', report_id=report.id) }}" class="btn btn-danger btn-sm">Delete</a>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No reports found. Perform a risk analysis to generate reports.</p>
+    {% endif %}
+    <div>{{ trend_chart|safe }}</div>
+</div>
+{% endblock %}

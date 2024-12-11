@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Report Details - SMAT{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <h2 class="text-center">Report Details</h2>
+    <div class="info-box d-flex justify-content-between">
+        <div>
+            <p class="info-title">Date Created</p>
+            <p> {{ created_at_local }} </p>
+        </div>
+        <div>
+            <p class="info-title">Risk Level</p>
+            <p> {{ risk_level }} </p>
+        </div>
+        <div>
+            <p class="info-title">Risk Score</p>
+            <p> {{ risk_score }} </p>
+        </div>
+    </div>
+
+    <div class="category-section">
+        <div class="category-title">Potential Oversharing</div>
+        <div class="category-details">
+            <ul class="list-group">
+                {% for post in risk_details.oversharing %}
+                    <li class="list-group-item">{{ post }}</li>
+                {% endfor %}
+                {% if not risk_details.oversharing %}
+                    <li class="list-group-item">No oversharing detected.</li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="category-section">
+        <div class="category-title">Potential Emotional Triggers</div>
+        <div class="category-details">
+            <ul class="list-group">
+                {% for post in risk_details.emotional_triggers %}
+                    <li class="list-group-item">{{ post }}</li>
+                {% endfor %}
+                {% if not risk_details.emotional_triggers %}
+                    <li class="list-group-item">No emotional triggers detected.</li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="category-section">
+        <div class="category-title">Potential Personal Data</div>
+        <div class="category-details">
+            <ul class="list-group">
+                {% for post in risk_details.personal_data %}
+                    <li class="list-group-item">{{ post }}</li>
+                {% endfor %}
+                {% if not risk_details.personal_data %}
+                    <li class="list-group-item">No personal data detected.</li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="category-section">
+        <div class="category-title">Potential Financial Information</div>
+        <div class="category-details">
+            <ul class="list-group">
+                {% for post in risk_details.financial_risks %}
+                    <li class="list-group-item">{{ post }}</li>
+                {% endfor %}
+                {% if not risk_details.financial_risks %}
+                    <li class="list-group-item">No financial data detected.</li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h3>Risk Categories Chart</h3>
+        <div>{{ bar_chart|safe }}</div>
+    </div>
+
+    <div class="text-center mt-4 mb-5">
+        <a href="{{ url_for('main.reports') }}" class="btn btn-primary">Back to Reports</a>
+    </div>
+</div>
+{% endblock %}

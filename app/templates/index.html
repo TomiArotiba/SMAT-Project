@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Welcome to SMAT{% endblock %}
+{% block content %}
+<div class="container text-center mt-5">
+    <h1>Welcome to SMAT!</h1>
+    <p class="lead">Social Media Analysis Tool for Social Engineering</p>
+    <a href="{{ url_for('main.login') }}" class="btn btn-primary">Login</a>
+    <a href="{{ url_for('main.register') }}" class="btn btn-secondary">Register</a>
+</div>
+{% endblock %}

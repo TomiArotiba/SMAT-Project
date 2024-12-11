@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Profile - SMAT{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <div class="card mb-3">
+        <div class="row no-gutters">
+            <div class="col-md-4">
+                <img src="{{ profile_data.picture.data.url }}" class="card-img" alt="Profile Picture">
+            </div>
+            <div class="col-md-8">
+                <div class="card-body">
+                    <h5 class="card-title">{{ profile_data.name }}</h5>
+                    <p class="card-text"><strong>Email:</strong> {{ profile_data.email or 'No email available' }}</p>
+                    <p class="card-text"><strong>Birthday:</strong> {{ profile_data.birthday or 'No birthday available' }}</p>
+                    <p class="card-text"><strong>Location:</strong> {{ profile_data.location.name or 'No location available' }}</p>
+                    <p class="card-text"><strong>Risk Level:</strong> {{ risk_level }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h3 class="mt-4">Recent Posts</h3>
+    <ul class="list-group">
+        {% for post in post_messages %}
+            <li class="list-group-item">{{ post.message }} (Sentiment Score: {{ post.sentiment_score }})</li>
+        {% endfor %}
+        {% if not post_messages %}
+            <li class="list-group-item">No posts available for analysis.</li>
+        {% endif %}
+    </ul>
+
+    <h3 class="mt-4">Potential Oversharing</h3>
+        <ul class="list-group">
+            {% for post in oversharing_posts %}
+                <li class="list-group-item">{{ post }}</li>
+            {% endfor %}
+            {% if not oversharing_posts %}
+                <li class="list-group-item">No oversharing detected.</li>
+            {% endif %}
+        </ul>
+
+    <h3 class="mt-4">Potential Emotional Triggers</h3>
+    <ul class="list-group">
+        {% for post in emotional_trigger_posts %}
+            <li class="list-group-item">{{ post }}</li>
+        {% endfor %}
+        {% if not emotional_trigger_posts %}
+            <li class="list-group-item">No emotional triggers detected.</li>
+        {% endif %}
+    </ul>
+
+    <h3 class="mt-4">Potential Personal Data</h4>
+    <ul class="list-group">
+        {% for post in personal_data_posts %}
+            <li class="list-group-item">{{ post }}</li>
+        {% endfor %}
+        {% if not personal_data_posts %}
+            <li class="list-group-item">No personal data detected.</li>
+        {% endif %}
+    </ul>
+
+    <h3 class="mt-4">Potential Financial Information</h4>
+    <ul class="list-group">
+        {% for post in financial_info_posts %}
+            <li class="list-group-item">{{ post }}</li>
+        {% endfor %}
+        {% if not financial_info_posts %}
+            <li class="list-group-item">No financial information detected.</li>
+        {% endif %}
+    </ul>
+
+    <div class="mt-4 d-flex justify-content-between mb-5">
+        <a href="{{ url_for('main.generate_report', report_id=latest_report.id) }}" class="btn btn-primary">Download Report</a>
+        <a href="{{ url_for('main.delete_account') }}" class="btn btn-danger">Delete Account</a>
+    </div>
+</div>
+{% endblock %}

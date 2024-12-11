@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.4;
+            font-size: 12px;
+        }
+        h1 {
+            text-align: center;
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+        h2 {
+            font-size: 16px;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #000;
+        }
+        h3 {
+            font-size: 14px;
+            margin-top: 25px;
+            margin-bottom: 10px;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .post {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .chart {
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+    <title>SMAT Report</title>
+</head>
+<body>
+    <h1>SMAT Analysis Report</h1>
+    <div class="section">
+        <h2>Profile Information</h2>
+        <p><strong>Name:</strong> {{ profile_name }}</p>
+        <p><strong>Email:</strong> {{ profile_email }}</p>
+        <p><strong>Birthday:</strong> {{ profile_birthday }}</p>
+        <p><strong>Location:</strong> {{ profile_location }}</p>
+        <p><strong>Date Created:</strong> {{ report.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+        <p><strong>Risk Level:</strong> {{ report.risk_level }}</p>
+        <p><strong>Risk Score:</strong> {{ report.risk_score }}</p>
+    </div>
+
+    <div class="section">
+        <h2>Risk Categories</h2>
+        <p><strong>Oversharing Posts:</strong> {{ oversharing_posts|length }}</p>
+        <p><strong>Emotional Trigger Posts:</strong> {{ emotional_trigger_posts|length }}</p>
+        <p><strong>Personal Data Posts:</strong> {{ personal_data_posts|length }}</p>
+        <p><strong>Financial Info Posts:</strong> {{ financial_info_posts|length }}</p>
+    </div>
+    
+    <div class="section">
+    <h2>Detailed Posts</h2>
+        <h3>Oversharing</h3>
+        {% for post in oversharing_posts %}
+            <div class="post">{{ post }}</div>
+        {% endfor %}
+        {% if not oversharing_posts %}<p>No oversharing detected.</p>{% endif %}
+    
+        <h3>Emotional Triggers</h3>
+        {% for post in emotional_trigger_posts %}
+            <div class="post">{{ post }}</div>
+        {% endfor %}
+        {% if not emotional_trigger_posts %}<p>No emotional triggers detected.</p>{% endif %}
+    
+        <h3>Personal Data</h3>
+        {% for post in personal_data_posts %}
+            <div class="post">{{ post }}</div>
+        {% endfor %}
+        {% if not personal_data_posts %}<p>No personal data detected.</p>{% endif %}
+
+        <h3>Financial Information</h3>
+        {% for post in financial_info_posts %}
+            <div class="post">{{ post }}</div>
+        {% endfor %}
+        {% if not financial_info_posts %}<p>No financial info detected.</p>{% endif %}
+    </div>
+    <div class="chart">
+        <h2>Risk Breakdown Chart</h2>
+        <img src="file://{{ chart_path }}" alt="Risk Breakdown Chart" width="600">
+    </div>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Delete Account - SMAT{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <h2>Delete Your Account</h2>
+    <p class="text-danger">Warning: This action is irreversible and will delete all your data.</p>
+    <form method="POST">
+        <button type="submit" class="btn btn-danger">Confirm Delete</button>
+        <a href="{{ url_for('main.profile') }}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

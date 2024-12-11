@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Suggestions - SMAT{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <h2 class="text-center">Suggestions for Reducing Risk</h2>
+
+    <!-- General Suggestions -->
+    <div class="category-section">
+        <div class="category-title">General Suggestions</div>
+        <div class="category-details">
+            {% for category, tips in general_tips.items() %}
+                <div class="info-box">
+                    <div class="info-title">{{ category }}</div>
+                    <ul class="list-group">
+                        {% for tip in tips %}
+                            <li class="list-group-item">{{ tip }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Personalized Suggestions -->
+    {% if personalized_suggestions %}
+        <div class="category-section">
+            <div class="category-title">Personalized Suggestions</div>
+            <div class="category-details">
+                <div class="info-box">
+                    {{ personalized_suggestions|safe }}
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
