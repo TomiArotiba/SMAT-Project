@@ -11,6 +11,8 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(150), nullable=False)
+    role = db.Column(db.String(50), nullable=False, default='user')
+    reports = db.relationship('Report', backref='user', lazy=True)
 
 #Report model for storing reports
 class Report(db.Model):
@@ -18,8 +20,8 @@ class Report(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
-    risk_score = db.Column(Numeric(precision=10, scale=2), nullable=False)
-    risk_message = db.Column(db.Text, nullable=False)
+    risk_score = db.Column(db.Float, nullable=False)
+    risk_message = db.Column(db.String(10), nullable=False)
     risk_level = db.Column(db.Text, nullable=False)
 
     def __repr__(self):

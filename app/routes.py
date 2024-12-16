@@ -1,19 +1,23 @@
-from flask import Blueprint, redirect, request, url_for, session, render_template, make_response
+from flask import Blueprint, redirect, request, url_for, flash, session, render_template, make_response, render_template_string, current_app
 from flask_login import login_user, login_required, logout_user, current_user
+from flask_mail import Message
 from werkzeug.security import generate_password_hash, check_password_hash
 from tzlocal import get_localzone
 from weasyprint import HTML
 from plotly.subplots import make_subplots
+from decimal import Decimal
 import plotly.graph_objs as go
 import plotly.io as pio
 import numpy as np
 import pandas as pd
 import joblib
 import requests
-from datetime import timezone
+from datetime import datetime, timezone
 import re
 from .models import db, User, Report
+from .config import ADMIN_INVITE_CODE
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import pyotp
 
 #Load the trained Random Forest model
 rf_model = joblib.load("random_forest_model.pkl")
@@ -43,16 +47,23 @@ def register():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
+        invite_code = request.form.get('invite_code')
 
         #Check if user already exists
         user = User.query.filter_by(email=email).first()
         if user:
-            return "Email already registered"
-
-        new_user = User(email=email, password=generate_password_hash(password, method='pbkdf2:sha256'))
+            flash('Email already exists!', 'danger')
+            return redirect(url_for('main.register'))
+        
+        if invite_code == ADMIN_INVITE_CODE:  #check if invite code is valid for admin user
+            role = 'admin'
+        else:
+            role='user'
+        new_user = User(email=email, password=generate_password_hash(password, method='pbkdf2:sha256'), role=role)
         db.session.add(new_user)
         db.session.commit()
 
+        flash('Registration successful!', 'success')
         return redirect(url_for('main.login'))
 
     return render_template('register.html')
@@ -63,24 +74,82 @@ def login():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
-
-        # Authenticate user
         user = User.query.filter_by(email=email).first()
-        if not user or not check_password_hash(user.password, password):
-            return "Invalid credentials"
 
-        login_user(user)
-        return redirect(url_for('main.login_facebook'))
+        # # Authenticate user
+        # user = User.query.filter_by(email=email).first()
+        # if not user or not check_password_hash(user.password, password):
+        #     return "Invalid credentials"
+        if user and check_password_hash(user.password, password):
+            # Send OTP for 2FA
+            send_otp(email)
+            session['email'] = email  # Temporarily store email in session
+            flash("An OTP has been sent to your email. Please verify.", "info")
+            return redirect(url_for('main.verify_otp'))
+        else:
+            flash("Invalid email or password.", "danger")
+            return redirect(url_for('main.login'))
+
+        # login_user(user)
+        # # Redirect to the profile page for parameter selection
+        # return redirect(url_for('main.profile'))
 
     return render_template('login.html')
 
+# Generate and send OTP
+def send_otp(email):
+    """Generate and send a time-based OTP via email."""
+    # Check if otp_secret already exists, otherwise generate it
+    if 'otp_secret' not in session:
+        session['otp_secret'] = pyotp.random_base32()
+
+    otp_secret = session['otp_secret']
+    totp = pyotp.TOTP(otp_secret)
+    otp_code = totp.now()
+
+    # Send the OTP via email
+    with current_app.app_context():
+        msg = Message(
+            subject='Your OTP Code',
+            recipients=[email],
+            body=f'Your OTP code is {otp_code}. It is valid for 5 minutes.'
+        )
+        current_app.extensions['mail'].send(msg)
+
+
+@main.route('/verify_otp', methods=['GET', 'POST'])
+def verify_otp():
+    if 'otp_secret' not in session or 'email' not in session:
+        flash("Session expired. Please log in again.", "danger")
+        return redirect(url_for('main.login'))
+
+    if request.method == 'POST':
+        otp_input = request.form.get('otp')
+
+        totp = pyotp.TOTP(session['otp_secret'])
+        if totp.verify(otp_input, valid_window=2):  # Allow for 2 previous or future time steps
+            # Clear session data and log in the user
+            user = User.query.filter_by(email=session['email']).first()
+            login_user(user)
+            session.pop('otp_secret', None)
+            session.pop('email', None)
+            flash("Login successful!", "success")
+            return redirect(url_for('main.profile'))
+        else:
+            flash("Invalid or expired OTP. Please try again.", "danger")
+            return redirect(url_for('main.verify_otp'))
+
+    return render_template('verify_otp.html')
+
 
 @main.route('/login_facebook')
+@login_required
 def login_facebook():
+    # Redirect to Facebook login URL
     return redirect(f"{FB_AUTH_URL}?client_id={FB_CLIENT_ID}&redirect_uri={FB_REDIRECT_URI}&scope=email,public_profile,user_birthday,user_location,user_posts")
 
-
 @main.route('/facebook/callback')
+@login_required
 def facebook_callback():
     code = request.args.get('code')
     token_response = requests.get(FB_TOKEN_URL, params={
@@ -89,11 +158,23 @@ def facebook_callback():
         'redirect_uri': FB_REDIRECT_URI,
         'code': code
     })
-    access_token = token_response.json().get('access_token')
-    if access_token:
-        session['access_token'] = access_token
-    return redirect(url_for('main.profile'))
 
+    if token_response.status_code != 200:
+        return "Error: Unable to fetch access token", 400
+
+    access_token = token_response.json().get('access_token')
+    if not access_token:
+        return "Error: Access token not received", 400
+
+    session['access_token'] = access_token
+
+    # Retrieve user inputs from session
+    num_posts = session.get('num_posts', 100)
+    start_date = session.get('start_date')
+    end_date = session.get('end_date')
+
+    # Redirect to profile page with parameters
+    return redirect(url_for('main.profile', num_posts=num_posts, start_date=start_date, end_date=end_date))
 
 @main.route('/logout')
 @login_required
@@ -102,37 +183,59 @@ def logout():
     logout_user()
     return redirect(url_for('main.login'))
 
-@main.route('/profile', methods=['GET'])
+@main.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
-    access_token = session.get('access_token')
-    if not access_token:
+    if request.method == 'POST':
+        # User's choice for number of posts to be analyzed
+        num_posts = request.form.get('num_posts', 100, type=int)
+        start_date = request.form.get('start_date', None)
+        end_date = request.form.get('end_date', None)
+
+        # Store inputs in session
+        session['num_posts'] = num_posts
+        session['start_date'] = start_date
+        session['end_date'] = end_date
+
+        # Redirect to Facebook login to fetch data
         return redirect(url_for('main.login_facebook'))
 
-    #Fetch profile data using Facebook API
+    # Fetch analysis results if access token is available
+    access_token = session.get('access_token')
+    if not access_token:
+        return render_template('profile.html', error="You need to log in to Facebook to fetch data.")
+
+    # Retrieve stored parameters
+    num_posts = session.get('num_posts', 100)
+    start_date = session.get('start_date')
+    end_date = session.get('end_date')
+
+    # Fetch profile data using Facebook API
     profile_response = requests.get(FB_API_URL, params={
-        'fields': 'id,name,email,picture,birthday,location,posts.limit(100)',
+        'fields': f'id,name,email,picture,birthday,location,posts.limit({num_posts})',
         'access_token': access_token
     })
 
-    #Handle errors in API response
-    if 'error' in profile_response.json():
-        return render_template('profile.html', profile_data=None, error="Unable to fetch profile data. Check your privacy settings.")
+    # Check if the API call was successful
+    if profile_response.status_code != 200 or 'error' in profile_response.json():
+        return render_template('profile.html', error="Unable to fetch data from Facebook. Please try again.")
 
     profile_data = profile_response.json()
-    
-    #Check for profiles with no posts
     posts_data = profile_data.get('posts', {}).get('data', [])
-    total_posts = len(posts_data)
+
+    # Filter posts by date range
+    if start_date:
+        start_date = f"{start_date}T00:00:00"
+    if end_date:
+        end_date = f"{end_date}T23:59:59"
+    posts_data = [
+        post for post in posts_data
+        if (not start_date or post.get('created_time') >= start_date) and
+           (not end_date or post.get('created_time') <= end_date)
+    ]
 
     if not posts_data:
-        return render_template_string(f"""
-            <h2>Profile Information</h2>
-            <strong>Name:</strong> {profile_data['name']}<br>
-            <strong>Email:</strong> {profile_data.get('email', 'No email')}<br>
-            <p>No posts available for analysis.</p>
-            <a href="{{ url_for('logout') }}" class="btn btn-secondary">Logout</a>
-        """)
+        return render_template('profile.html', profile_data=profile_data, error="No posts available for analysis.")
 
     #Initialize risk categories
     personal_data_risk = 0
@@ -253,7 +356,7 @@ def profile():
 
     #Combine rule-based and model predictions
     final_risk_score = 0.6 * predicted_risk + 0.4 * (weighted_heuristic_score / 10)  #Normalize heuristic score
-
+    rounded_risk_score = round(Decimal(final_risk_score), 2)
     #Update risk message and display for testing.
     if final_risk_score < 1:
         risk_message += "The overall risk level is LOW.<br>"
@@ -272,7 +375,7 @@ def profile():
     session['profile_email'] = profile_data.get('email', 'No email')
     session['profile_birthday'] = profile_data.get('birthday', 'No birthday')
     session['profile_location'] = profile_data.get('location', {}).get('name', 'No location')                
-    session['risk_score'] = float(final_risk_score)
+    session['risk_score'] = rounded_risk_score
     session['risk_message'] = risk_message
     session['risk_level'] = risk_level
     session['num_oversharing'] = num_oversharing
@@ -284,7 +387,8 @@ def profile():
     #Save report to the database
     new_report = Report(
         user_id=current_user.id,
-        risk_score=final_risk_score,
+        created_at=datetime.now(timezone.utc),
+        risk_score=rounded_risk_score,
         risk_message=risk_message,
         risk_level=risk_level
     )
@@ -343,7 +447,7 @@ def reports():
 @login_required
 def view_report(report_id):
     report = Report.query.get_or_404(report_id)
-    if report.user_id != current_user.id:
+    if current_user.role != 'admin' and report.user_id != current_user.id:
         return "Unauthorized access", 403
     
     #Convert to local timezone
@@ -392,7 +496,7 @@ def view_report(report_id):
 @login_required
 def delete_report(report_id):
     report = Report.query.get_or_404(report_id)
-    if report.user_id != current_user.id:
+    if current_user.role != 'admin' and report.user_id != current_user.id:
         return "Unauthorized access", 403
     db.session.delete(report)
     db.session.commit()
@@ -403,7 +507,7 @@ def delete_report(report_id):
 @login_required
 def generate_report(report_id):
     report = Report.query.get_or_404(report_id)
-    if report.user_id != current_user.id:
+    if current_user.role != 'admin' and report.user_id != current_user.id:
         return "Unauthorized access", 403
 
     #Retrieve profile details from session

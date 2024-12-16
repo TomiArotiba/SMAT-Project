@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}User Details - SMAT{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <h1>User Details</h1>
+    <p><strong>Email:</strong> {{ user.email }}</p>
+    <p><strong>Role:</strong> {{ user.role }}</p>
+    <p><strong>Reports:</strong> {{ user.reports|length }}</p>
+
+    <h2>Reports</h2>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Date Created</th>
+                <th>Risk Score</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for report in user.reports %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ report.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                <td>{{ report.risk_score }}</td>
+                <td>
+                    <a href="{{ url_for('main.view_report', report_id=report.id) }}" class="btn btn-primary btn-sm">View</a>
+                    <a href="{{ url_for('main.generate_report', report_id=report.id) }}" class="btn btn-primary btn-sm">Download</a>
+                    <a href="{{ url_for('main.delete_report', report_id=report.id) }}" class="btn btn-danger btn-sm">Delete</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
